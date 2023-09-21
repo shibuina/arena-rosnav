@@ -10,8 +10,8 @@
   },
   "robots": [
     {
-      "start": ["X", "Y"],
-      "goal": ["X", "Y"]
+      "start": ["X", "Y", 0],
+      "goal": ["X", "Y", 0]
     }
   ],
   "map": "<NAME OF THE MAP>",

@@ -86,7 +86,7 @@ class GazeboSimulator(BaseSimulator):
 
         spawn_ped_msg.peds = peds
 
-        self._spawn_peds_srv(spawn_ped_msg)
+        self._spawn_peds_srv(peds)
 
     def reset_pedsim_agents(self):
         self._reset_peds_srv()
