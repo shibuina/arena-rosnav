@@ -15,6 +15,7 @@ from task_generator.tasks.task_factory import TaskFactory
 from task_generator.tasks.random import RandomTask
 from task_generator.tasks.scenario import ScenarioTask
 from task_generator.tasks.staged import StagedRandomTask
+from task_generator.tasks.random_scenario import RandomScenarioTask
 from task_generator.utils import Utils
 
 from map_distance_server.srv import GetDistanceMap
@@ -46,6 +47,7 @@ def get_predefined_task(namespace, mode, simulator=None, **kwargs):
     # - Create a robot manager
     # - Launch the robot.launch file
 
+    print("utils calls task factory")
     task = TaskFactory.instantiate(
         mode,
         obstacle_manager,
@@ -82,7 +84,12 @@ def create_robot_managers(namespace, map_manager, simulator):
             name = f"{robot['model']}_{r}_{len(robot_managers)}"  
 
             robot_managers.append(
-                RobotManager(os.path.join(namespace, name), map_manager, simulator, robot)
+                #RobotManager(os.path.join(namespace, name), map_manager, simulator, robot)
+
+                #old but working due to namespace issue with "/" prefix in robot name
+                RobotManager(namespace + "/" + name, map_manager, simulator, robot)
+    
+
             )
 
     return robot_managers

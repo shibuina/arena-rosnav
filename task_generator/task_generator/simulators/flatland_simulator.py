@@ -19,18 +19,24 @@ from flatland_msgs.srv import (
     SpawnModelRequest,
     SpawnModelsRequest
 )
-from geometry_msgs.msg import Pose2D
 from flatland_msgs.msg import MoveModelMsg, Model
+from nav_msgs.srv import GetMap
+
 from pedsim_srvs.srv import SpawnPeds
 from pedsim_msgs.msg import Ped
-from task_generator.manager.pedsim_manager import PedsimManager
+from pedsim_srvs.srv import SpawnInteractiveObstacles,SpawnInteractiveObstaclesRequest
+from pedsim_srvs.srv import SpawnObstacle,SpawnObstacleRequest
+from pedsim_msgs.msg import InteractiveObstacle, LineObstacle
+
 from task_generator.utils import Utils
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, Pose2D, Pose
 from std_srvs.srv import Trigger
 
-from ..constants import Constants, FlatlandRandomModel
+from ..constants import Constants, FlatlandRandomModel, Pedsim
 from .base_simulator import BaseSimulator
 from .simulator_factory import SimulatorFactory
+import xml.etree.ElementTree as ET
+
 
 
 T = Constants.WAIT_FOR_SERVICE_TIMEOUT
@@ -97,14 +103,6 @@ class FlatlandSimulator(BaseSimulator):
         self._delete_models_srv = rospy.ServiceProxy(
             f"{self._ns_prefix}delete_models", DeleteModels
         )
-
-        self._spawn_peds_srv = rospy.ServiceProxy(
-            f"{self._ns_prefix}pedsim_simulator/spawn_peds", SpawnPeds
-        )
-        self._reset_peds_srv = rospy.ServiceProxy(
-            f"{self._ns_prefix}pedsim_simulator/reset_all_peds", Trigger
-        )
-
         self.obs_names = []
 
     @property
@@ -121,7 +119,6 @@ class FlatlandSimulator(BaseSimulator):
         pass
 
     # PEDSIM
-
     def remove_all_obstacles(self):
         request = DeleteModelsRequest()
         request.name = self.obs_names
@@ -130,25 +127,17 @@ class FlatlandSimulator(BaseSimulator):
 
         self.obs_names = []
 
-    def spawn_pedsim_agents(self, dynamic_obstacles: List):
-        if len(dynamic_obstacles) <= 0:
-            return
-
-        peds = [
-            FlatlandSimulator.create_ped_msg(p, i)
-            for i, p in enumerate(dynamic_obstacles)
-        ]
-
-        spawn_ped_msg = SpawnPeds()
-
-        spawn_ped_msg.peds = peds
-
-        self._spawn_peds_srv(peds)
-
-    def reset_pedsim_agents(self):
-        self._reset_peds_srv()
-
     # CREATE OBSTACLES
+
+    # def spawn_random_ped_test(self, **args):
+    #     peds = [create_ped_msg(p, i) for i, p in enumerate(dynamic_obstacles)]
+
+    #     spawn_ped_msg = SpawnPeds()
+
+    #     spawn_ped_msg.peds = peds
+
+    #     self._spawn_peds_srv(spawn_ped_msg)
+    #     return 0
 
     def create_dynamic_obstacle(self, **args):
         return self._create_obstacle(**args, is_dynamic=True)
@@ -168,7 +157,6 @@ class FlatlandSimulator(BaseSimulator):
         return yaml.dump(model), name, position
 
     # SPAWN OBSTACLES
-
     def spawn_obstacle(
         self, position: Tuple[int, int, int], yaml_path=""
     ):
@@ -182,6 +170,7 @@ class FlatlandSimulator(BaseSimulator):
         self.add_obs_to_list(name)
 
     def spawn_obstacles(self, obstacles):
+
         request = SpawnModelsRequest()
 
         models = []
@@ -202,7 +191,6 @@ class FlatlandSimulator(BaseSimulator):
         self._spawn_models_from_string_srv(request)
 
     # ROBOT
-
     def spawn_robot(self, name, robot_name, namespace_appendix=None, complexity=1):
         base_model_path = os.path.join(
             rospkg.RosPack().get_path("arena-simulation-setup"),
@@ -237,7 +225,6 @@ class FlatlandSimulator(BaseSimulator):
         self._move_model_srv(move_model_request)
 
     # UTILS
-
     def _spawn_model(
         self,
         yaml_path: str,
@@ -382,60 +369,60 @@ class FlatlandSimulator(BaseSimulator):
     def check_yaml_path(path):
         return os.path.isfile(path)
 
-    @staticmethod
-    def create_ped_msg(ped, id):
-        msg = Ped()
+    # @staticmethod
+    # def create_ped_msg(ped, id):
+    #     msg = Ped()
 
-        msg.id = id
+    #     msg.id = id
 
-        pos = Point()
-        pos.x = ped["waypoints"][0][0]
-        pos.y = ped["waypoints"][0][1]
-        msg.pos = pos
+    #     pos = Point()
+    #     pos.x = ped["waypoints"][0][0]
+    #     pos.y = ped["waypoints"][0][1]
+    #     msg.pos = pos
 
-        msg.type = "adult"
-        msg.yaml_file = os.path.join(
-            rospkg.RosPack().get_path("arena-simulation-setup"),
-            "dynamic_obstacles",
-            "person_two_legged.model.yaml",
-        )
-        msg.number_of_peds = 1
-        msg.vmax = 0.3
-        msg.start_up_mode = "default"
-        msg.wait_time = 0.0
-        msg.trigger_zone_radius = 0.0
-        msg.chatting_probability = 0.00
-        msg.tell_story_probability = 0
-        msg.group_talking_probability = 0.00
-        msg.talking_and_walking_probability = 0.00
-        msg.requesting_service_probability = 0.00
-        msg.requesting_guide_probability = 0.00
-        msg.requesting_follower_probability = 0.00
-        msg.max_talking_distance = 5
-        msg.max_servicing_radius = 5
-        msg.talking_base_time = 10
-        msg.tell_story_base_time = 0
-        msg.group_talking_base_time = 10
-        msg.talking_and_walking_base_time = 6
-        msg.receiving_service_base_time = 20
-        msg.requesting_service_base_time = 30
-        msg.force_factor_desired = 1
-        msg.force_factor_obstacle = 1
-        msg.force_factor_social = 5
-        msg.force_factor_robot = 1
+    #     msg.type = "adult"
+    #     msg.yaml_file = os.path.join(
+    #         rospkg.RosPack().get_path("arena-simulation-setup"),
+    #         "dynamic_obstacles",
+    #         "person_two_legged.model.yaml",
+    #     )
+    #     msg.number_of_peds = 1
+    #     msg.vmax = 0.3
+    #     msg.start_up_mode = "default"
+    #     msg.wait_time = 0.0
+    #     msg.trigger_zone_radius = 0.0
+    #     msg.chatting_probability = 0.00
+    #     msg.tell_story_probability = 0
+    #     msg.group_talking_probability = 0.00
+    #     msg.talking_and_walking_probability = 0.00
+    #     msg.requesting_service_probability = 0.00
+    #     msg.requesting_guide_probability = 0.00
+    #     msg.requesting_follower_probability = 0.00
+    #     msg.max_talking_distance = 5
+    #     msg.max_servicing_radius = 5
+    #     msg.talking_base_time = 10
+    #     msg.tell_story_base_time = 0
+    #     msg.group_talking_base_time = 10
+    #     msg.talking_and_walking_base_time = 6
+    #     msg.receiving_service_base_time = 20
+    #     msg.requesting_service_base_time = 30
+    #     msg.force_factor_desired = 1
+    #     msg.force_factor_obstacle = 1
+    #     msg.force_factor_social = 5
+    #     msg.force_factor_robot = 1
 
-        waypoints = []
+    #     waypoints = []
 
-        for w in ped["waypoints"]:
-            new_waypoint = Point()
+    #     for w in ped["waypoints"]:
+    #         new_waypoint = Point()
 
-            new_waypoint.x = w[0]
-            new_waypoint.y = w[1]
+    #         new_waypoint.x = w[0]
+    #         new_waypoint.y = w[1]
 
-            waypoints.append(new_waypoint)
+    #         waypoints.append(new_waypoint)
 
-        msg.waypoints = waypoints
+    #     msg.waypoints = waypoints
 
-        msg.waypoint_mode = 0
+    #     msg.waypoint_mode = 0
 
-        return msg
+    #     return msg

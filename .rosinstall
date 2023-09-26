@@ -3,7 +3,13 @@
 - git:
     local-name: ../utils/flatland
     uri: https://github.com/Arena-Rosnav/flatland.git
-    version: v2.0.0
+    version: master
+
+    # Change back to Arena-Rosnav once the PR is merged
+- git:
+    local-name: ../utils/arena-tools
+    uri: https://github.com/basselfa/arena-tools.git
+    version: main
 
 - git:
     local-name: ../utils/stable-baselines3
@@ -15,9 +21,10 @@
     uri: https://bitbucket.org/acl-swarm/ford_msgs/src/master/
     version: master
 
+    # Change back to Arena-Rosnav once the PR is merged
 - git:
     local-name: ../utils/pedsim_ros
-    uri: https://github.com/Arena-Rosnav/pedsim_ros.git
+    uri: https://github.com/basselfa/pedsim_ros.git
     version: master
 
 - git:

@@ -4,7 +4,7 @@
   <arg name="model" default="burger"/>
   <arg name="cmd_vel_topic" default="/cmd_vel" />
   <arg name="odom_topic" default="odom" />
-  <arg name="speed" default="0.22"/>
+  <arg name="speed" default="2"/>
   <arg name="namespace" />
 
   <!-- move_base -->
@@ -17,8 +17,7 @@
     <!-- planner params -->
     <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
     <remap from="odom" to="$(arg odom_topic)"/>
-    <remap from="move_base_simple/goal" to="$(arg namespace)/move_base_simple/goal" />
-    
+
     <!-- teb -->
     <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS" />
     <param name="TebLocalPlannerROS/max_vel_x" value="$(arg speed)" />
