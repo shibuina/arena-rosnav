@@ -122,7 +122,7 @@ class Config:
 
     PEDSIM_WALLS = {
         "Class": "rviz/Marker",
-        "Enabled": True,
+        "Enabled": False,
         "Marker Topic": "/pedsim_visualizer/walls",
         "Name": "PedsimWalls",
         "Namespaces": {

@@ -31,6 +31,7 @@
 - git:
     local-name: ../utils-extern/misc/robots
     uri: https://github.com/voshch/3rd-party-robot-packages
+    version: robot-videos
 
 - git:
     local-name: ../utils-extern/misc/jackal
