@@ -485,6 +485,8 @@ class PedsimManager(EntityManager):
 
     def _walls_callback(self, walls: pedsim_msgs.Walls):
 
+        return;
+
         if not rosparam_get(bool, self._namespace(self.PARAM_NEEDS_RESPAWN_WALLS), False):
             return;
 

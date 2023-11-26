@@ -50,7 +50,7 @@
 - git:
     local-name: ../arena-simulation-setup
     uri: https://github.com/Arena-Rosnav/arena-simulation-setup.git
-    version: dev
+    version: robot-videos
 
 - git:
     local-name: ../arena-evaluation

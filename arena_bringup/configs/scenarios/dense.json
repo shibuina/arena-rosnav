@@ -1,0 +1,72 @@
+{
+  "robots": [
+    {
+      "start": [23.0, 0.0, 0.0],
+      "goal": [-20.0, 0.0, 0.0]
+    }
+  ],
+  "obstacles": {
+    "static": [],
+    "interactive": [],
+    "dynamic": [
+      {
+        "name": "3",
+        "id": 0,
+        "pos": [4.0, 4.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[7.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+      },
+      {
+        "name": "4",
+        "id": 0,
+        "pos": [1.0, -1.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[-7.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+      },
+      {
+        "name": "6",
+        "id": 0,
+        "pos": [-1.0, 1.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[0.0, -7.0, 0.0], [0.0, 0.0, 0.0]]
+      },
+      {
+        "name": "7",
+        "id": 0,
+        "pos": [7.0, 0.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[0.0, 0.0, 0.0], [7.0, 0.0, 0.0]]
+      },
+      {
+        "name": "8",
+        "id": 0,
+        "pos": [-7.0, 0.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[0.0, 0.0, 0.0], [-7.0, 0.0, 0.0]]
+      },
+      {
+        "name": "9",
+        "id": 0,
+        "pos": [0.0, 6.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[0.0, 0.0, 0.0], [0.0, 7.0, 0.0]]
+      },
+      {
+        "name": "10",
+        "id": 0,
+        "pos": [0.0, -7.0, 0.0],
+        "type": "adult",
+        "model": "actor1",
+        "waypoints": [[0.0, 0.0, 0.0], [0.0, -7.0, 0.0]]
+      }
+    ]
+  },
+  "resets": 50,
+  "map": "arena_hawker_centre"
+}
