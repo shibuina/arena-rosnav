@@ -6,48 +6,37 @@ from typing import Dict, List
 import rclpy
 import rclpy.node
 import rclpy.executors
+from rclpy.parameter import Parameter
 
 import yaml
-import ament_index_python
+from ament_index_python.packages import get_package_share_directory
 from task_generator.constants import Constants
 from task_generator.constants.runtime import Config
 
 from task_generator.manager.entity_manager.entity_manager import EntityManager
-#from task_generator.manager.entity_manager.flatland_manager import FlatlandManager
-#from task_generator.manager.entity_manager.pedsim_manager import PedsimManager
-#from task_generator.manager.entity_manager.crowdsim_manager import CrowdsimManager
-
 from task_generator.manager.world_manager import WorldManager
 from task_generator.manager.obstacle_manager import ObstacleManager
-from task_generator.manager.robot_manager import RobotManager
-from task_generator.manager.utils import WorldMap
 from task_generator.shared import (
     ModelWrapper,
     Namespace,
     Robot,
     gen_init_pos,
-    rosparam_get
 )
 
 from task_generator.simulators import BaseSimulator, SimulatorFactory
-from task_generator.tasks import Task
 from task_generator.tasks.task_factory import TaskFactory
 from task_generator.utils import ModelLoader
 import task_generator.utils.arena as Utils
-
-from task_generator.manager.world_manager import WorldManager
-from task_generator.manager.obstacle_manager import ObstacleManager
 
 import map_distance_server.srv as map_distance_server_srvs
 from std_msgs.msg import Int16, Empty
 import std_srvs.srv as std_srvs
 from std_srvs.srv import Empty as EmptySrv
 
-
 def create_default_robot_list(
     robot_model: ModelWrapper,
     name: str,
-    inter_planner:str,
+    inter_planner: str,
     local_planner: str,
     agent: str
 ) -> List[Robot]:
@@ -59,11 +48,10 @@ def create_default_robot_list(
             agent=agent,
             position=next(gen_init_pos),
             name=name,
-            record_data_dir=rosparam_get(str, "record_data_dir", None),
+            record_data_dir=Config.Robot.RECORD_DATA_DIR,
             extra=dict(),
         )
     ]
-
 
 def read_robot_setup_file(setup_file: str) -> List[Dict]:
     try:
@@ -80,10 +68,9 @@ def read_robot_setup_file(setup_file: str) -> List[Dict]:
 
         return robots
 
-    except:
+    except Exception as e:
         traceback.print_exc()
-        raise Exception("Failed to read robot setup file")
-
+        raise Exception("Failed to read robot setup file") from e
 
 class TaskGenerator(rclpy.node.Node):
     """
@@ -112,9 +99,9 @@ class TaskGenerator(rclpy.node.Node):
             ]
         )
         
-        #self._entity_mode = Constants.EntityManager(self.get_parameter('entity_manager').value)
-        self._auto_reset = self.get_parameter('auto_reset').value
-        self._train_mode = self.get_parameter('train_mode').value
+        # Initialize parameters
+        self._auto_reset = self.get_parameter('auto_reset').get_parameter_value().bool_value
+        self._train_mode = self.get_parameter('train_mode').get_parameter_value().bool_value
 
         # Publishers
         if not self._train_mode:
@@ -124,8 +111,25 @@ class TaskGenerator(rclpy.node.Node):
             # Services
             self.create_service(EmptySrv, 'reset_task', self._reset_task_srv_callback)
 
+        # Parameter callback for dynamic updates
+        self.add_on_set_parameters_callback(self.parameter_callback)
+
+    def parameter_callback(self, params: List[Parameter]):
+        """
+        Handle dynamic updates to parameters
+        """
+        for param in params:
+            if param.name == 'auto_reset':
+                self._auto_reset = param.value
+            elif param.name == 'train_mode':
+                self._train_mode = param.value
+        return rclpy.parameter.SetParametersResult(successful=True)
+
     def post_init(self):
-        # Vars
+        """
+        Initialize other components and start the node spinning
+        """
+        # Initialize the simulator
         self._env_wrapper = SimulatorFactory.instantiate(Utils.get_simulator())(
             namespace=self._namespace
         )
@@ -159,7 +163,6 @@ class TaskGenerator(rclpy.node.Node):
                 self.srv_setup_finished.call_async(EmptySrv.Request())
             except:
                 pass
-        rclpy.spin(self)
 
     def _get_predefined_task(self, **kwargs):
         """
@@ -170,11 +173,11 @@ class TaskGenerator(rclpy.node.Node):
                 self._namespace
             )
 
-        cli = self.create_client(GetDistanceMap, '/distance_map')
+        cli = self.create_client(map_distance_server_srvs.GetDistanceMap, '/distance_map')
         while not cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
         
-        req = GetDistanceMap.Request()
+        req = map_distance_server_srvs.GetDistanceMap.Request()
         future = cli.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         
@@ -183,18 +186,6 @@ class TaskGenerator(rclpy.node.Node):
             world_map=WorldMap.from_occupancy_grid(occupancy_grid=map_response)
         )
 
-        # if self._entity_mode == Constants.EntityManager.PEDSIM:
-        #     self._entity_manager = PedsimManager(
-        #         namespace=self._namespace, simulator=self._env_wrapper
-        #     )
-        # elif self._entity_mode == Constants.EntityManager.FLATLAND:
-        #     self._entity_manager = FlatlandManager(
-        #         namespace=self._namespace, simulator=self._env_wrapper
-        #     )
-        # elif self._entity_mode == Constants.EntityManager.CROWDSIM:
-        #     self._entity_manager = CrowdsimManager(
-        #         namespace=self._namespace, simulator=self._env_wrapper
-        #     )
         self._entity_manager = EntityManager(
             namespace=self._namespace, simulator=self._env_wrapper
         )
@@ -210,14 +201,7 @@ class TaskGenerator(rclpy.node.Node):
 
         robot_managers = self._create_robot_managers()
 
-        # For every robot
-        # - Create a unique namespace name
-        # - Create a robot manager
-        # - Launch the robot.launch file
-
-        PARAM_TM_MODULES = "tm_modules"
-
-        tm_modules_value = rosparam_get(str, PARAM_TM_MODULES, "")
+        tm_modules_value = self.get_parameter("tm_modules").get_parameter_value().string_value
         tm_modules = list(
             set(
                 [
@@ -231,7 +215,7 @@ class TaskGenerator(rclpy.node.Node):
         tm_modules.append(Constants.TaskMode.TM_Module.CLEAR_FORBIDDEN_ZONES)
         tm_modules.append(Constants.TaskMode.TM_Module.RVIZ_UI)
 
-        if rosparam_get(str, "map_file", "") == "dynamic_map":
+        if self.get_parameter("map_file").get_parameter_value().string_value == "dynamic_map":
             tm_modules.append(Constants.TaskMode.TM_Module.DYNAMIC_MAP)
 
         self.get_logger().debug("utils calls task factory")
@@ -248,18 +232,19 @@ class TaskGenerator(rclpy.node.Node):
         return task
 
     def _create_robot_managers(self) -> List[RobotManager]:
-        # Read robot setup file
-        robot_setup_file: str = self.get_parameter('robot_setup_file').value
+        """
+        Creates robot managers based on configuration
+        """
+        robot_setup_file: str = self.get_parameter('robot_setup_file').get_parameter_value().string_value
 
-        robot_model: str = self.get_parameter('model').value
-
+        robot_model: str = self.get_parameter('model').get_parameter_value().string_value
 
         if robot_setup_file == "":
             robots = create_default_robot_list(
                 robot_model=self._robot_loader.bind(robot_model),
-                inter_planner=rosparam_get(str, "/inter_planner", ""),
-                local_planner=rosparam_get(str, "/local_planner", ""),
-                agent=rosparam_get(str, "/agent_name", ""),
+                inter_planner=self.get_parameter("inter_planner").get_parameter_value().string_value,
+                local_planner=self.get_parameter("local_planner").get_parameter_value().string_value,
+                agent=self.get_parameter("agent_name").get_parameter_value().string_value,
                 name=f"{self._namespace[1:]}_{robot_model}"
                 if self._train_mode
                 else robot_model,
@@ -290,8 +275,6 @@ class TaskGenerator(rclpy.node.Node):
 
         for robot in robots:
             robot_managers.append(
-                # RobotManager(os.path.join(namespace, name), simulator, robot)
-                # old but working due to namespace issue with "/" prefix in robot name
                 RobotManager(
                     namespace=self._namespace,
                     entity_manager=self._entity_manager,
@@ -304,6 +287,9 @@ class TaskGenerator(rclpy.node.Node):
     # RUNTIME
 
     def reset_task(self, **kwargs):
+        """
+        Reset the current task
+        """
         self._start_time = self.get_clock().now().seconds_nanoseconds()[0]
 
         self._env_wrapper.before_reset_task()
@@ -325,25 +311,34 @@ class TaskGenerator(rclpy.node.Node):
         self.get_logger().info("=============")
 
     def _check_task_status(self, *args, **kwargs):
+        """
+        Check the status of the task and reset if done
+        """
         if self._task.is_done:
             self.reset_task()
 
     def _reset_task_srv_callback(self, request: std_srvs.Empty.Request, response: std_srvs.Empty.Response):
+        """
+        Service callback to reset the task
+        """
         self.get_logger().debug("Task Generator received task-reset request!")
         self.reset_task()
         return response
 
     def _send_end_message_on_end(self):
+        """
+        Send a message when all tasks are completed
+        """
         if self._number_of_resets < Config.General.DESIRED_EPISODES:
             return
 
         self.get_logger().info(f"Shutting down. All {int(Config.General.DESIRED_EPISODES)} tasks completed")
         rclpy.shutdown()
 
-TASKGEN_NODE: TaskGenerator
-
-def init_task_gen_node(args=None):
+# Main function to start the node
+def main(args=None):
     rclpy.init(args=args)
-
-    global TASKGEN_NODE
-    TASKGEN_NODE = TaskGenerator()
+    task_generator = TaskGenerator()  
+    task_generator.post_init()  
+    rclpy.spin(task_generator)  
+    rclpy.shutdown()  
