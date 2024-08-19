@@ -4,33 +4,34 @@ from typing import Any, Callable, Optional
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from task_generator.shared import Namespace
 
 from . import Constants
 
 @dataclasses.dataclass
 class TaskConfig_General:
-    WAIT_FOR_SERVICE_TIMEOUT: float = None
-    MAX_RESET_FAIL_TIMES: int = None
-    RNG: np.random.Generator = None
-    DESIRED_EPISODES: float = None
+    WAIT_FOR_SERVICE_TIMEOUT: float = Constants.get_default("TIMEOUT_WAIT_FOR_SERVICE")
+    MAX_RESET_FAIL_TIMES: int = Constants.get_default("MAX_RESET_FAIL_TIMES")
+    RNG: np.random.Generator = np.random.default_rng(1)
+    DESIRED_EPISODES: float = Constants.get_default("EPISODES")
 
 @dataclasses.dataclass
 class TaskConfig_Robot:
-    GOAL_TOLERANCE_RADIUS: float = None
-    GOAL_TOLERANCE_ANGLE: float = None
-    SPAWN_ROBOT_SAFE_DIST: float = None
-    TIMEOUT: float = None
+    GOAL_TOLERANCE_RADIUS: float = Constants.get_default("GOAL_RADIUS")
+    GOAL_TOLERANCE_ANGLE: float = Constants.get_default("GOAL_TOLERANCE_ANGLE")
+    SPAWN_ROBOT_SAFE_DIST: float = Constants.get_default("SPAWN_ROBOT_SAFE_DIST")
+    TIMEOUT: float = Constants.get_default("TIMEOUT")
 
 @dataclasses.dataclass
 class TaskConfig_Obstacles:
-    OBSTACLE_MAX_RADIUS: float = None
+    OBSTACLE_MAX_RADIUS: float = Constants.get_default("OBSTACLE_MAX_RADIUS")
 
 @dataclasses.dataclass
 class TaskConfig:
-    General: TaskConfig_General = None
-    Robot: TaskConfig_Robot = None
-    Obstacles: TaskConfig_Obstacles = None
+    General: TaskConfig_General = TaskConfig_General()
+    Robot: TaskConfig_Robot = TaskConfig_Robot()
+    Obstacles: TaskConfig_Obstacles = TaskConfig_Obstacles()
 
 Config = TaskConfig()
 
@@ -39,39 +40,19 @@ class TaskGeneratorNode(Node):
         super().__init__('task_generator_node')
 
         # Parameter deklarieren und auf Standardwerte setzen
-        self.declare_parameter('timeout_wait_for_service', Constants.get_default("TIMEOUT_WAIT_FOR_SERVICE"))
-        self.declare_parameter('max_reset_fail_times', Constants.get_default("MAX_RESET_FAIL_TIMES"))
-        self.declare_parameter('goal_radius', Constants.get_default("GOAL_RADIUS"))
-        self.declare_parameter('goal_tolerance_angle', Constants.get_default("GOAL_TOLERANCE_ANGLE"))
-        self.declare_parameter('spawn_robot_safe_dist', Constants.get_default("SPAWN_ROBOT_SAFE_DIST"))
-        self.declare_parameter('timeout', Constants.get_default("TIMEOUT"))
-        self.declare_parameter('obstacle_max_radius', Constants.get_default("OBSTACLE_MAX_RADIUS"))
-        self.declare_parameter('episodes', Constants.get_default("EPISODES"))
-
-        # Konfiguration initialisieren
-        global Config
-        Config.General = TaskConfig_General(
-            WAIT_FOR_SERVICE_TIMEOUT=self.get_parameter('timeout_wait_for_service').get_parameter_value().double_value,
-            MAX_RESET_FAIL_TIMES=self.get_parameter('max_reset_fail_times').get_parameter_value().integer_value,
-            RNG=np.random.default_rng(1),
-            DESIRED_EPISODES=float(self.get_parameter('episodes').get_parameter_value().integer_value)
-        )
-
-        Config.Robot = TaskConfig_Robot(
-            GOAL_TOLERANCE_RADIUS=self.get_parameter('goal_radius').get_parameter_value().double_value,
-            GOAL_TOLERANCE_ANGLE=self.get_parameter('goal_tolerance_angle').get_parameter_value().double_value,
-            SPAWN_ROBOT_SAFE_DIST=self.get_parameter('spawn_robot_safe_dist').get_parameter_value().double_value,
-            TIMEOUT=self.get_parameter('timeout').get_parameter_value().double_value
-        )
-
-        Config.Obstacles = TaskConfig_Obstacles(
-            OBSTACLE_MAX_RADIUS=self.get_parameter('obstacle_max_radius').get_parameter_value().double_value
-        )
+        self.declare_parameter('timeout_wait_for_service', Config.General.WAIT_FOR_SERVICE_TIMEOUT)
+        self.declare_parameter('max_reset_fail_times', Config.General.MAX_RESET_FAIL_TIMES)
+        self.declare_parameter('goal_radius', Config.Robot.GOAL_TOLERANCE_RADIUS)
+        self.declare_parameter('goal_tolerance_angle', Config.Robot.GOAL_TOLERANCE_ANGLE)
+        self.declare_parameter('spawn_robot_safe_dist', Config.Robot.SPAWN_ROBOT_SAFE_DIST)
+        self.declare_parameter('timeout', Config.Robot.TIMEOUT)
+        self.declare_parameter('obstacle_max_radius', Config.Obstacles.OBSTACLE_MAX_RADIUS)
+        self.declare_parameter('episodes', Config.General.DESIRED_EPISODES)
 
         # Parameter-Callback einrichten
         self.add_on_set_parameters_callback(self.parameter_callback)
 
-    def parameter_callback(self, params):
+    def parameter_callback(self, params: list[Parameter]):
         global Config
         for param in params:
             if param.name == 'timeout_wait_for_service':
