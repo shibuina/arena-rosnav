@@ -39,7 +39,7 @@ class TaskGeneratorNode(Node):
     def __init__(self):
         super().__init__('task_generator_node')
 
-        # Parameter deklarieren und auf Standardwerte setzen
+        # declare parameters and set default values 
         self.declare_parameter('timeout_wait_for_service', Config.General.WAIT_FOR_SERVICE_TIMEOUT)
         self.declare_parameter('max_reset_fail_times', Config.General.MAX_RESET_FAIL_TIMES)
         self.declare_parameter('goal_radius', Config.Robot.GOAL_TOLERANCE_RADIUS)
@@ -49,7 +49,7 @@ class TaskGeneratorNode(Node):
         self.declare_parameter('obstacle_max_radius', Config.Obstacles.OBSTACLE_MAX_RADIUS)
         self.declare_parameter('episodes', Config.General.DESIRED_EPISODES)
 
-        # Parameter-Callback einrichten
+        # set up parameter callback
         self.add_on_set_parameters_callback(self.parameter_callback)
 
     def parameter_callback(self, params: list[Parameter]):

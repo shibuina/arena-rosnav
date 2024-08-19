@@ -4,12 +4,14 @@ import typing
 import numpy as np
 import os
 import scipy.spatial.transform
-from rosros import rospify as rospy
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
 from task_generator.constants import Constants
 from task_generator.constants.runtime import Config
 from task_generator.manager.entity_manager.entity_manager import EntityManager
 from task_generator.manager.entity_manager.utils import YAMLUtil
-from task_generator.shared import ModelType, Namespace, PositionOrientation, Robot, rosparam_get
+from task_generator.shared import ModelType, Namespace, PositionOrientation, Robot
 
 import task_generator.utils.arena as Utils
 from task_generator.utils.geometry import quaternion_from_euler
@@ -20,15 +22,16 @@ import std_srvs.srv as std_srvs
 
 import launch
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import Node as LaunchNode
 from launch.launch_service import LaunchService
 
-class RobotManager:
+class RobotManager(Node):
     """
     The robot manager manages the goal and start
     position of a robot for all task modes.
     """
 
+    ## Define class attributes with type annotations
     _namespace: Namespace
     _entity_manager: EntityManager
     _start_pos: PositionOrientation
@@ -38,10 +41,9 @@ class RobotManager:
     _goal_tolerance_distance: float
     _goal_tolerance_angle: float
     _robot: Robot
-    _move_base_pub: rospy.Publisher
-    _move_base_goal_pub: rospy.Publisher
-    _pub_goal_timer: rospy.Timer
-    _clear_costmaps_srv: rospy.ServiceProxy
+    _move_base_goal_pub: rclpy.publisher.Publisher
+    _pub_goal_timer: rclpy.timer.Timer
+    _clear_costmaps_srv: rclpy.client.Client
 
     @property
     def start_pos(self) -> PositionOrientation:
@@ -54,25 +56,42 @@ class RobotManager:
     def __init__(
         self, namespace: Namespace, entity_manager: EntityManager, robot: Robot
     ):
+        ## Initialize the Node
+        super().__init__('robot_manager')
         self._namespace = namespace
         self._entity_manager = entity_manager
         self._start_pos = PositionOrientation(0, 0, 0)
         self._goal_pos = PositionOrientation(0, 0, 0)
-        self._goal_tolerance_distance = rosparam_get(
-            float, "goal_radius", Config.Robot.GOAL_TOLERANCE_RADIUS
-        )
-        self._goal_tolerance_angle = rosparam_get(
-            float, "goal_tolerance_angle", Config.Robot.GOAL_TOLERANCE_ANGLE
-        )
+
+        ## Declare parameters with default values
+        self.declare_parameter('goal_radius', Config.Robot.GOAL_TOLERANCE_RADIUS)
+        self.declare_parameter('goal_tolerance_angle', Config.Robot.GOAL_TOLERANCE_ANGLE)
+        self.declare_parameter(f'{robot.name}/safety_distance', Config.Robot.SPAWN_ROBOT_SAFE_DIST)
+
+        ## Initialize configuration using parameters
+        self._goal_tolerance_distance = self.get_parameter('goal_radius').get_parameter_value().double_value
+        self._goal_tolerance_angle = self.get_parameter('goal_tolerance_angle').get_parameter_value().double_value
+        self._safety_distance = self.get_parameter(f'{robot.name}/safety_distance').get_parameter_value().double_value
+
         self._robot = robot
-        self._safety_distance = rosparam_get(
-            float,
-            f"{robot.name}/safety_distance",
-            Config.Robot.SPAWN_ROBOT_SAFE_DIST,
-        )
         self._position = self._start_pos
 
+        ## Set up parameter callback
+        self.add_on_set_parameters_callback(self.parameter_callback)
+
+    def parameter_callback(self, params: typing.List[Parameter]):
+        ## Callback to handle parameter updates
+        for param in params:
+            if param.name == 'goal_radius':
+                self._goal_tolerance_distance = param.value
+            elif param.name == 'goal_tolerance_angle':
+                self._goal_tolerance_angle = param.value
+            elif param.name == f'{self._robot.name}/safety_distance':
+                self._safety_distance = param.value
+        return rclpy.parameter.SetParametersResult(successful=True)
+
     def set_up_robot(self):
+        ## Set up the robot model and entity manager
         self._robot = dataclasses.replace(
             self._robot,
             model=self._robot.model.override(
@@ -92,27 +111,33 @@ class RobotManager:
 
         _gen_goal_topic = self.namespace("move_base_simple", "goal")
 
-        self._move_base_goal_pub = rospy.Publisher(
-            _gen_goal_topic, geometry_msgs.PoseStamped, queue_size=10
+        ## Create publisher for the goal topic
+        self._move_base_goal_pub = self.create_publisher(
+            geometry_msgs.PoseStamped, _gen_goal_topic, 10
         )
 
-        self._pub_goal_timer = rospy.Timer(
-            rospy.Duration(nsecs=int(0.25e9)), self._publish_goal_periodically
+        ## Create timer to publish goals periodically
+        self._pub_goal_timer = self.create_timer(
+            0.25, self._publish_goal_periodically
         )
 
-        rospy.Subscriber(
-            self.namespace("odom"), nav_msgs.Odometry, self._robot_pos_callback
+        ## Subscribe to odometry data
+        self.create_subscription(
+            nav_msgs.Odometry, self.namespace("odom"), self._robot_pos_callback, 10
         )
 
         self._launch_robot()
-        self._robot_radius = (
-            float(rospy.get_param_cached("robot_radius"))
-            if Utils.get_arena_type() == Constants.ArenaType.TRAINING
-            else rosparam_get(float, self.namespace("robot_radius"))
-        )
 
-        self._clear_costmaps_srv = rospy.ServiceProxy(
-            self.namespace("move_base", "clear_costmaps"), std_srvs.Empty
+        ## Set robot radius based on the arena type
+        if Utils.get_arena_type() == Constants.ArenaType.TRAINING:
+            self._robot_radius = float(self.get_parameter("robot_radius").get_parameter_value().double_value)
+        else:
+            self.declare_parameter(self.namespace("robot_radius"), Config.Robot.GOAL_TOLERANCE_RADIUS)
+            self._robot_radius = self.get_parameter(self.namespace("robot_radius")).get_parameter_value().double_value
+
+        ## Set up service client for clearing costmaps
+        self._clear_costmaps_srv = self.create_client(
+            std_srvs.Empty, self.namespace("move_base", "clear_costmaps")
         )
 
     @property
@@ -129,6 +154,7 @@ class RobotManager:
 
     @property
     def namespace(self) -> Namespace:
+        ## Return the appropriate namespace based on the arena type
         if Utils.get_arena_type() == Constants.ArenaType.TRAINING:
             return Namespace(
                 f"{self._namespace}{self._namespace}_{self.model_name}"
@@ -138,9 +164,11 @@ class RobotManager:
 
     @property
     def is_done(self) -> bool:
+        ## Check if the robot has reached the goal
         return self._is_goal_reached
 
     def move_robot_to_pos(self, position: PositionOrientation):
+        ## Move the robot to the specified position
         self._entity_manager.move_robot(name=self.name, position=position)
 
     def reset(
@@ -148,13 +176,18 @@ class RobotManager:
         start_pos: typing.Optional[PositionOrientation],
         goal_pos: typing.Optional[PositionOrientation],
     ):
+        ## Reset the robot's start and goal positions
         if start_pos is not None:
             self._start_pos = start_pos
             self.move_robot_to_pos(start_pos)
 
             if self._robot.record_data_dir is not None:
-                rospy.set_param(
-                    self.namespace("start"), [float(v) for v in self._start_pos]
+                self.set_parameter(
+                    rclpy.parameter.Parameter(
+                        self.namespace("start"),
+                        rclpy.Parameter.Type.DOUBLE_ARRAY,
+                        [float(v) for v in self._start_pos]
+                    )
                 )
 
         if goal_pos is not None:
@@ -162,19 +195,23 @@ class RobotManager:
             self._publish_goal(self._goal_pos)
 
             if self._robot.record_data_dir is not None:
-                rospy.set_param(
-                    self.namespace("goal"), [float(v) for v in self._goal_pos]
+                self.set_parameter(
+                    rclpy.parameter.Parameter(
+                        self.namespace("goal"),
+                        rclpy.Parameter.Type.DOUBLE_ARRAY,
+                        [float(v) for v in self._goal_pos]
+                    )
                 )
 
-        try:
-            self._clear_costmaps_srv()
-        except:
-            pass
+        ## Clear costmaps if service is available
+        if self._clear_costmaps_srv.wait_for_service(timeout_sec=1.0):
+            self._clear_costmaps_srv.call_async(std_srvs.Empty.Request())
 
         return self._position, self._goal_pos
 
     @property
     def _is_goal_reached(self) -> bool:
+        ## Calculate the distance and angle to the goal
         start = self._position
         goal = self._goal_pos
 
@@ -189,14 +226,15 @@ class RobotManager:
             and angle_to_goal < self._goal_tolerance_angle
         )
 
-    def _publish_goal_periodically(self, *args, **kwargs):
+    def _publish_goal_periodically(self):
+        ## Publish the goal periodically if available
         if self._goal_pos is not None:
             self._publish_goal(self._goal_pos)
 
     def _publish_goal(self, goal: PositionOrientation):
+        ## Publish the goal position to the topic
         goal_msg = geometry_msgs.PoseStamped()
-        goal_msg.header.seq = 0
-        goal_msg.header.stamp = rospy.get_rostime()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
         goal_msg.header.frame_id = "map"
         goal_msg.pose.position.x = goal.x
         goal_msg.pose.position.y = goal.y
@@ -209,7 +247,8 @@ class RobotManager:
         self._move_base_goal_pub.publish(goal_msg)
 
     def _launch_robot(self):
-        rospy.logwarn(f"START WITH MODEL {self.namespace}")
+        ## Launch the robot using a launch file
+        self.get_logger().warn(f"START WITH MODEL {self.namespace}")
 
         if Utils.get_arena_type() != Constants.ArenaType.TRAINING:
             launch_description = LaunchDescription()
@@ -222,8 +261,8 @@ class RobotManager:
                 'frame': f"{self.name}/" if self.name else '',
                 'inter_planner': self._robot.inter_planner,
                 'local_planner': self._robot.local_planner,
-                'complexity': rosparam_get(int, 'complexity', 1),
-                'train_mode': rosparam_get(bool, 'train_mode', False),
+                'complexity': self.get_parameter('complexity').get_parameter_value().integer_value,
+                'train_mode': self.get_parameter('train_mode').get_parameter_value().bool_value,
                 'agent_name': self._robot.agent,
             }
 
@@ -233,7 +272,7 @@ class RobotManager:
                     'record_data_dir': self._robot.record_data_dir,
                 })
 
-            launch_description.add_action(Node(
+            launch_description.add_action(LaunchNode(
                 package='arena_bringup',
                 executable='robot',
                 output='screen',
@@ -244,27 +283,18 @@ class RobotManager:
             self.launch_service.include_launch_description(launch_description)
             self.launch_service.run()
 
-        base_frame: str = rospy.get_param_cached(self.namespace("robot_base_frame"))
-        sensor_frame: str = rospy.get_param_cached(self.namespace("robot_sensor_frame"))
+        base_frame: str = self.get_parameter(self.namespace("robot_base_frame")).get_parameter_value().string_value
+        sensor_frame: str = self.get_parameter(self.namespace("robot_sensor_frame")).get_parameter_value().string_value
 
-        rospy.set_param(
-            self.namespace("move_base", "global_costmap", "robot_base_frame"),
-            os.path.join(self.name, base_frame),
-        )
-        rospy.set_param(
-            self.namespace("move_base", "local_costmap", "robot_base_frame"),
-            os.path.join(self.name, base_frame),
-        )
-        rospy.set_param(
-            self.namespace("move_base", "local_costmap", "scan", "sensor_frame"),
-            os.path.join(self.name, sensor_frame),
-        )
-        rospy.set_param(
-            self.namespace("move_base", "global_costmap", "scan", "sensor_frame"),
-            os.path.join(self.name, base_frame),
-        )
+        self.set_parameters([
+            Parameter(self.namespace("move_base", "global_costmap", "robot_base_frame"), Parameter.Type.STRING, os.path.join(self.name, base_frame)),
+            Parameter(self.namespace("move_base", "local_costmap", "robot_base_frame"), Parameter.Type.STRING, os.path.join(self.name, base_frame)),
+            Parameter(self.namespace("move_base", "local_costmap", "scan", "sensor_frame"), Parameter.Type.STRING, os.path.join(self.name, sensor_frame)),
+            Parameter(self.namespace("move_base", "global_costmap", "scan", "sensor_frame"), Parameter.Type.STRING, os.path.join(self.name, sensor_frame))
+        ])
 
     def _robot_pos_callback(self, data: nav_msgs.Odometry):
+        ## Callback to update robot's current position based on odometry data
         current_position = data.pose.pose
         quat = current_position.orientation
 
@@ -277,3 +307,10 @@ class RobotManager:
             current_position.position.y,
             rot.as_euler("xyz")[2],
         )
+
+## Main function to start the node
+def main(args=None):
+    rclpy.init(args=args)
+    node = RobotManager()  ## Initialize RobotManager node
+    rclpy.spin(node)  
+    rclpy.shutdown()  
