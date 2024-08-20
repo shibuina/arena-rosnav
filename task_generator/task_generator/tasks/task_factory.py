@@ -1,6 +1,10 @@
 import os
 import typing
 
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+
 from rosros import rospify as rospy
 from rospkg import RosPack
 
@@ -8,7 +12,7 @@ from task_generator.constants import Constants
 from task_generator.manager.obstacle_manager import ObstacleManager
 from task_generator.manager.robot_manager import RobotManager
 from task_generator.manager.world_manager import WorldManager
-from task_generator.shared import PositionOrientation, rosparam_get
+from task_generator.shared import PositionOrientation
 from task_generator.tasks import Task
 from task_generator.tasks.modules import TM_Module
 from task_generator.tasks.obstacles import TM_Obstacles
@@ -16,15 +20,59 @@ from task_generator.tasks.robots import TM_Robots
 
 import std_msgs.msg as std_msgs
 import rosgraph_msgs.msg as rosgraph_msgs
-#import training.srv as training_srvs
 
 from task_generator.utils import ModelLoader
 
 
-class TaskFactory:
+class TaskFactory(Node):
     registry_obstacles: typing.Dict[Constants.TaskMode.TM_Obstacles, typing.Callable[[], typing.Type[TM_Obstacles]]] = {}
     registry_robots: typing.Dict[Constants.TaskMode.TM_Robots, typing.Callable[[], typing.Type[TM_Robots]]] = {}
     registry_module: typing.Dict[Constants.TaskMode.TM_Module, typing.Callable[[], typing.Type[TM_Module]]] = {}
+
+    def __init__(self):
+        super().__init__('task_factory')
+
+        # Declare parameters
+        self.declare_parameters(
+            namespace='',
+            parameters=[
+                ('tm_robots', ''),
+                ('tm_obstacles', ''),
+                ('train_mode', False)
+            ]
+        )
+
+        self._train_mode = self.get_parameter('train_mode').get_parameter_value().bool_value
+        self._force_reset = False
+        self.__reset_mutex = False
+
+        # Publishers
+        self.__reset_start = self.create_publisher(std_msgs.Empty, 'reset_start', 1)
+        self.__reset_end = self.create_publisher(std_msgs.Empty, 'reset_end', 1)
+
+        # Subscribers
+        self.create_subscription(rosgraph_msgs.Clock, '/clock', self._clock_callback, 10)
+        self.clock = rosgraph_msgs.Clock()
+        self.last_reset_time = 0
+
+        # Initialize the rest as None, will be set later
+        self.__tm_robots = None
+        self.__tm_obstacles = None
+
+        # Add parameter callback
+        self.add_on_set_parameters_callback(self.parameter_callback)
+
+    def parameter_callback(self, params: typing.List[Parameter]):
+        for param in params:
+            if param.name == 'tm_robots':
+                new_tm_robots = Constants.TaskMode.TM_Robots(param.value)
+                if new_tm_robots != self.__param_tm_robots:
+                    self.set_tm_robots(new_tm_robots)
+            elif param.name == 'tm_obstacles':
+                new_tm_obstacles = Constants.TaskMode.TM_Obstacles(param.value)
+                if new_tm_obstacles != self.__param_tm_obstacles:
+                    self.set_tm_obstacles(new_tm_obstacles)
+        return rclpy.parameter.SetParametersResult(successful=True)
 
     @classmethod
     def register_obstacles(cls, name: Constants.TaskMode.TM_Obstacles):
@@ -32,10 +80,8 @@ class TaskFactory:
             assert (
                 name not in cls.registry_obstacles
             ), f"TaskMode '{name}' for obstacles already exists!"
-
             cls.registry_obstacles[name] = loader
             return loader
-
         return inner_wrapper
 
     @classmethod
@@ -44,10 +90,8 @@ class TaskFactory:
             assert (
                 name not in cls.registry_obstacles
             ), f"TaskMode '{name}' for robots already exists!"
-
             cls.registry_robots[name] = loader
             return loader
-
         return inner_wrapper
 
     @classmethod
@@ -56,10 +100,8 @@ class TaskFactory:
             assert (
                 name not in cls.registry_obstacles
             ), f"TaskMode '{name}' for module already exists!"
-
             cls.registry_module[name] = loader
             return loader
-
         return inner_wrapper
 
     @classmethod
@@ -83,8 +125,6 @@ class TaskFactory:
             __tm_robots: TM_Robots
             __tm_obstacles: TM_Obstacles
 
-            _force_reset: bool
-
             def __init__(
                 self,
                 obstacle_manager: ObstacleManager,
@@ -94,39 +134,12 @@ class TaskFactory:
                 *args,
                 **kwargs,
             ):
-                """
-                Initializes a CombinedTask object.
-
-                Args:
-                    obstacle_manager (ObstacleManager): The obstacle manager for the task.
-                    robot_managers (typing.List[RobotManager]): The typing.List of robot managers for the task.
-                    world_manager (WorldManager): The world manager for the task.
-                    namespace (str, optional): The namespace for the task. Defaults to "".
-                    *args: Variable length argument typing.List.
-                    **kwargs: Arbitrary keyword arguments.
-                """
-                self._force_reset = False
+                super().__init__(namespace)
                 self.namespace = namespace
 
                 self.obstacle_manager = obstacle_manager
                 self.robot_managers = robot_managers
                 self.world_manager = world_manager
-
-                self._train_mode = rosparam_get(bool, "/train_mode", False)
-
-                self.__reset_start = rospy.Publisher(
-                    self.TOPIC_RESET_START, std_msgs.Empty, queue_size=1
-                )
-                self.__reset_end = rospy.Publisher(
-                    self.TOPIC_RESET_END, std_msgs.Empty, queue_size=1
-                )
-                self.__reset_mutex = False
-
-                rospy.Subscriber("/clock", rosgraph_msgs.Clock, self._clock_callback)
-                self.last_reset_time = 0
-                self.clock = rosgraph_msgs.Clock()
-
-                self.set_up_robot_managers()
 
                 self.model_loader = ModelLoader(
                     os.path.join(
@@ -152,8 +165,8 @@ class TaskFactory:
                 ]
 
                 if self._train_mode:
-                    self.set_tm_robots(Constants.TaskMode.TM_Robots(rospy.get_param("tm_robots")))
-                    self.set_tm_obstacles(Constants.TaskMode.TM_Obstacles(rospy.get_param("tm_obstacles")))
+                    self.set_tm_robots(Constants.TaskMode.TM_Robots(self.get_parameter('tm_robots').get_parameter_value().string_value))
+                    self.set_tm_obstacles(Constants.TaskMode.TM_Obstacles(self.get_parameter('tm_obstacles').get_parameter_value().string_value))
 
             def set_tm_robots(self, tm_robots: Constants.TaskMode.TM_Robots):
                 """
@@ -187,24 +200,21 @@ class TaskFactory:
 
                 Args:
                     **kwargs: Additional keyword arguments for resetting the task.
-
-                Returns:
-                    None
                 """
                 try:
-                    self.__reset_start.publish()
+                    self.__reset_start.publish(std_msgs.Empty())
 
                     if not self._train_mode:
                         if (
                             new_tm_robots := Constants.TaskMode.TM_Robots(
-                                rosparam_get(str, self.PARAM_TM_ROBOTS)
+                                self.get_parameter(self.PARAM_TM_ROBOTS).get_parameter_value().string_value
                             )
                         ) != self.__param_tm_robots:
                             self.set_tm_robots(new_tm_robots)
 
                         if (
                             new_tm_obstacles := Constants.TaskMode.TM_Obstacles(
-                                rosparam_get(str, self.PARAM_TM_OBSTACLES)
+                                self.get_parameter(self.PARAM_TM_OBSTACLES).get_parameter_value().string_value
                             )
                         ) != self.__param_tm_obstacles:
                             self.set_tm_obstacles(new_tm_obstacles)
@@ -224,45 +234,31 @@ class TaskFactory:
                     for module in self.__modules:
                         module.after_reset()
 
-                    self.last_reset_time = self.clock.clock.secs
+                    self.last_reset_time = self.clock.clock.sec
 
-                except rospy.ServiceException as e:
-                    rospy.logerr(repr(e))
-                    rospy.signal_shutdown("Reset error!")
+                except Exception as e:
+                    self.get_logger().error(repr(e))
+                    rclpy.shutdown("Reset error!")
                     raise Exception("reset error!") from e
 
                 finally:
-                    self.__reset_end.publish()
+                    self.__reset_end.publish(std_msgs.Empty())
 
             def _mutex_reset_task(self, **kwargs):
                 """
                 Executes a reset task while ensuring mutual exclusion.
-
-                This function acquires a mutex lock to ensure that only one reset task is executed at a time.
-                It sets a parameter to indicate that the system is resetting, publishes a reset start message,
-                performs the reset task, and then publishes a reset end message. If any exception occurs during
-                the reset task, it logs the error, shuts down the ROS node, and raises an exception.
-
-                Args:
-                    kwargs: Additional keyword arguments.
-
-                Raises:
-                    Exception: If an error occurs during the reset task.
-
                 """
                 while self.__reset_mutex:
-                    rospy.sleep(0.001)
+                    rclpy.sleep(0.001)
                 self.__reset_mutex = True
 
                 try:
-                    rospy.set_param(self.PARAM_RESETTING, True)
                     self._reset_task()
 
                 except Exception as e:
                     raise e
 
                 finally:
-                    rospy.set_param(self.PARAM_RESETTING, False)
                     self.__reset_mutex = False
 
             def reset(self, **kwargs):
@@ -310,3 +306,10 @@ class TaskFactory:
                 self._force_reset = True
 
         return CombinedTask
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    task_factory = TaskFactory()  # Initialize TaskFactory node
+    rclpy.spin(task_factory)  
+    rclpy.shutdown()  
